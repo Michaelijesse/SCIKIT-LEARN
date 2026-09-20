@@ -1,0 +1,202 @@
+############Cell 1 — Upload CSV#######################
+from google.colab import files
+
+uploaded = files.upload()
+Upload tomato_yield_sample.csv.
+
+#################Cell 2 — Import libraries###############
+import time
+import pandas as pd
+
+from sklearn.model_selection import train_test_split
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.neural_network import MLPClassifier
+from sklearn.svm import SVC
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.metrics import (
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    confusion_matrix,
+    roc_auc_score,
+    classification_report
+)
+
+##################Cell 3 — Load data and create the label#################
+df = pd.read_csv("tomato_yield_sample.csv")
+df.columns = df.columns.str.strip()
+
+# Yield >= 70 t/ha = High Yield (1)
+# Yield < 70 t/ha = Low Yield (0)
+YIELD_THRESHOLD = 70.0
+
+df["Yield_Class"] = (
+    df["Tomato_Yield_t_ha"] >= YIELD_THRESHOLD
+).astype(int)
+
+print(df.head())
+print("\nClass counts:")
+print(df["Yield_Class"].value_counts())
+
+######################Cell 4 — Select features and split train/test data########################
+# Remove ID, original numeric label, and newly created class label
+X = df.drop(columns=[
+    "Greenhouse_ID",
+    "Tomato_Yield_t_ha",
+    "Yield_Class"
+])
+
+# Classification label
+y = df["Yield_Class"]
+
+categorical_features = ["Variety", "Production_System"]
+numeric_features = [
+    col for col in X.columns
+    if col not in categorical_features
+]
+
+# Preprocessing
+preprocessor = ColumnTransformer([
+    ("numeric", Pipeline([
+        ("imputer", SimpleImputer(strategy="median")),
+        ("scaler", StandardScaler())
+    ]), numeric_features),
+
+    ("categorical", Pipeline([
+        ("imputer", SimpleImputer(strategy="most_frequent")),
+        ("onehot", OneHotEncoder(
+            handle_unknown="ignore",
+            sparse_output=False
+        ))
+    ]), categorical_features)
+])
+
+# 70% training and 30% testing
+X_train, X_test, y_train, y_test = train_test_split(
+    X,
+    y,
+    test_size=0.30,
+    random_state=42,
+    stratify=y
+)
+
+print("Training rows:", len(X_train))
+print("Testing rows:", len(X_test))
+
+############################Cell 5 — Define ANN, SVM, Random Forest, Logistic Regression, and KNN############################
+models = {
+    "ANN": MLPClassifier(
+        hidden_layer_sizes=(16, 8),
+        max_iter=1000,
+        random_state=42
+    ),
+
+    "SVM": SVC(
+        kernel="rbf",
+        probability=True,
+        random_state=42
+    ),
+
+    "Random Forest": RandomForestClassifier(
+        n_estimators=200,
+        random_state=42
+    ),
+
+    "Logistic Regression": LogisticRegression(
+        max_iter=1000
+    ),
+
+    "KNN": KNeighborsClassifier(
+        n_neighbors=3
+    )
+}
+
+############################Cell 6 — Train models and calculate all evaluation metrics########################################
+results = []
+
+for name, classifier in models.items():
+
+    model = Pipeline([
+        ("preprocessor", preprocessor),
+        ("classifier", classifier)
+    ])
+
+    # Training time
+    start_train = time.perf_counter()
+    model.fit(X_train, y_train)
+    training_time = time.perf_counter() - start_train
+
+    # Prediction time
+    start_predict = time.perf_counter()
+    y_pred = model.predict(X_test)
+    y_prob = model.predict_proba(X_test)[:, 1]
+    prediction_time = time.perf_counter() - start_predict
+
+    # Metrics
+    accuracy = accuracy_score(y_test, y_pred)
+    precision = precision_score(y_test, y_pred, zero_division=0)
+    recall = recall_score(y_test, y_pred, zero_division=0)
+    f1 = f1_score(y_test, y_pred, zero_division=0)
+    roc_auc = roc_auc_score(y_test, y_prob)
+    cm = confusion_matrix(y_test, y_pred)
+
+    print(f"\n{'=' * 45}")
+    print(name)
+    print(f"{'=' * 45}")
+    print(f"Accuracy:        {accuracy:.3f}")
+    print(f"Precision:       {precision:.3f}")
+    print(f"Recall:          {recall:.3f}")
+    print(f"F1-score:        {f1:.3f}")
+    print(f"ROC-AUC:         {roc_auc:.3f}")
+    print(f"Training time:   {training_time:.4f} seconds")
+    print(f"Prediction time: {prediction_time * 1000:.4f} ms")
+
+    print("\nConfusion Matrix")
+    print("Rows: Actual [Low Yield, High Yield]")
+    print("Columns: Predicted [Low Yield, High Yield]")
+    print(cm)
+
+    print("\nClassification Report")
+    print(classification_report(
+        y_test,
+        y_pred,
+        target_names=["Low Yield", "High Yield"],
+        zero_division=0
+    ))
+
+    results.append({
+        "Model": name,
+        "Accuracy": accuracy,
+        "Precision": precision,
+        "Recall": recall,
+        "F1-score": f1,
+        "ROC-AUC": roc_auc,
+        "Training_Time_sec": training_time,
+        "Prediction_Time_ms": prediction_time * 1000
+    })
+
+
+
+###################################Cell 7 — Display and download comparison results##################################
+results_df = pd.DataFrame(results).sort_values(
+    by="F1-score",
+    ascending=False
+)
+
+print("MODEL COMPARISON")
+display(results_df.round(3))
+
+results_df.to_csv("model_evaluation_results.csv", index=False)
+
+from google.colab import files
+files.download("model_evaluation_results.csv")
+
+
+########################If sparse_output=False gives an error, replace it with:###############
+sparse=False
